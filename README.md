@@ -1,10 +1,10 @@
 # medai-agent-loop-cli-anything
 
-> **A CLI-first medical AI workflow prototype for tool calling, annotation verification, and structured reasoning.**
+> **A runnable CLI-based medical AI workflow prototype with tool calling, verification, and structured reasoning.**
 
-`medai-agent-loop-cli-anything` demonstrates how medical AI models and utilities can be wrapped into reproducible command-line tools, exposed as agent-callable capabilities, and composed into a deterministic medical workflow with verification, review routing, annotation versioning, and RadThinking-style trace generation.
+`medai-agent-loop-cli-anything` provides a unified `medai-cli` interface for running medical AI tools from the command line. It wraps model inference, segmentation post-processing, annotation verification, VLM-assisted review, versioned annotation management, and RadThinking-style trace generation into reproducible commands with structured JSON outputs.
 
-This repository is a **research-engineering prototype**. It is **not** a clinical product, **not** a diagnostic system, and **not** a full reproduction of ScaleMAI.
+This project focuses on the core engineering layer needed for a medical agent workflow: making models and utilities callable, making intermediate results auditable, and organizing multiple tools into a controlled loop of observation, inference, quality checking, verification, review, and state saving.
 
 ---
 
