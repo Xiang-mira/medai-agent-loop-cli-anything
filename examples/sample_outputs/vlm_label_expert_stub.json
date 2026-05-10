@@ -1,0 +1,9 @@
+{
+  "stage": "vlm_label_expert",
+  "status": "review_queue",
+  "vlm_backend": "stub",
+  "winner": "uncertain",
+  "confidence": 0.0,
+  "reason": "Stub backend used in self-contained demo; no real VLM call was made.",
+  "num_projection_images_sent": 0
+}

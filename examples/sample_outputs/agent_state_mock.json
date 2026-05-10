@@ -1,0 +1,18 @@
+{
+  "patient_id": "patient_001",
+  "events": [
+    {
+      "step": "observe_patient",
+      "status": "success"
+    },
+    {
+      "step": "act_infer",
+      "status": "success",
+      "backend": "custom_mock"
+    },
+    {
+      "step": "act_build_radthinking_trace",
+      "status": "success"
+    }
+  ]
+}

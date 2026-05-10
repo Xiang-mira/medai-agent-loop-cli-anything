@@ -1,0 +1,15 @@
+{
+  "stage": "projection_builder",
+  "status": "success",
+  "organ": "pancreas",
+  "views": [
+    "axial",
+    "coronal"
+  ],
+  "strict_alignment": true,
+  "saved_projections": [
+    "outputs/projections/pancreas_axial.png",
+    "outputs/projections/pancreas_coronal.png"
+  ],
+  "note": "Mask-centered 2D slice overlay prototype; left=A, right=B."
+}

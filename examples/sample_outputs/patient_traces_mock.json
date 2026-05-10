@@ -1,0 +1,21 @@
+[
+  {
+    "scan_id": "scan_001",
+    "organ": "liver",
+    "radthinking_trace": {
+      "observation": {
+        "status": "success",
+        "volume_cm3": 12.345
+      },
+      "temporal_comparison": {
+        "temporal_label": "NO_PRIOR"
+      },
+      "clinical_context": {
+        "suspicious_terms": []
+      },
+      "diagnostic_conclusion": {
+        "note": "No pathology/follow-up JSON provided; no diagnosis inferred."
+      }
+    }
+  }
+]
