@@ -243,17 +243,6 @@ python run_medai_cli.py --json agent-loop \
 }
 ```
 
-> **注意**：`execution_status: "failed"` 是 dry_run 的预期行为——dry_run 不执行真实推理，`infer_status` 为 `"dry_run"` 而非 `"success"`，因此 `num_successful_scans=0`。每个 scan 的 pipeline 步骤均已正确执行（infer→qc→decide 全部通过），无代码错误。
+Note: execution_status: "failed" is expected in dry_run mode. Since dry run does not execute real inference, infer_status is "dry_run" rather than "success", so num_successful_scans=0. The scan-level pipeline still ran correctly through infer → qc → decide, so this is not a code error.
 
----
-
-## 总结
-
-| 验证项 | 结果 |
-|--------|------|
-| pytest 24 tests | ✅ 24 passed |
-| doctor | ✅ status: success |
-| projection-build | ✅ 生成 liver_axial.png + liver_coronal.png |
-| vlm-label-expert (stub) | ✅ DSC 计算正确（0.434856），projection 生成，stub 路由 review_queue |
-| em-loop --dry-run | ✅ 2 轮完成，annotation_summary 正确，data_annealing_plan 记录 |
-| agent-loop --dry-run | ✅ 3 scans 全部 infer→qc→decide 流程执行，execution_status=failed 为预期（无真实推理） |
+Overall, validation passed successfully: all 24 pytest tests passed, doctor returned status: success, projection-build generated liver_axial.png and liver_coronal.png, and vlm-label-expert with the stub backend correctly computed DSC = 0.434856, generated projections, and routed the case to review. The em-loop --dry-run completed two rounds with the expected annotation summary and data annealing plan, while agent-loop --dry-run processed all three scans correctly under dry-run behavior.
