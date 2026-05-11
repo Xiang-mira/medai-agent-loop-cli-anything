@@ -55,6 +55,27 @@ The repository is not only a single-model wrapper. It contains a CLI wrapper lay
 
 ---
 
+## Layered Implementation Design
+
+The implementation separates **backend**, **core workflow logic**, and **CLI interface**.
+
+```text
+Backend layer
+→ low-level model / software execution
+
+Core layer
+→ workflow logic, verification, routing, tracing, state management
+
+CLI layer
+→ command-line parameters, user-facing commands, JSON output
+```
+
+This separation keeps the system modular. The backend layer handles concrete model or software calls, such as TotalSegmentator, ShapeKit, a custom local model command, or a VLM backend. The core layer implements the medical workflow logic, including QC, label verification, projection generation, annotation versioning, mini EM-style refinement, RadThinking-style trace construction, and state recording. The CLI layer exposes these capabilities through documented commands, handles user parameters, and returns structured outputs.
+
+Because of this design, replacing a model does not require rewriting the entire workflow. A new segmentation model or medical tool can be connected through the backend interface while the same CLI commands, core workflow logic, JSON outputs, and state-management structure remain reusable.
+
+---
+
 ## Implementation Details
 
 ### Label Verifier
@@ -167,7 +188,7 @@ This figure clarifies the conceptual structure of the project.
 | Concept | Meaning in this repository |
 |---|---|
 | **Model** | Backend capability such as TotalSegmentator, a custom segmentation model, a mock backend, or a VLM |
-| **Tool** | A callable operation such as `infer`, `postprocess`, `label-verify`, `projection-build`, `vlm-label-expert`, `em-loop`, or `trace-build` |
+| **Tool** | A callable operation exposed as a `medai-cli` command, such as `infer`, `postprocess`, `label-verify`, `projection-build`, `vlm-label-expert`, `em-loop`, `agent-loop`, or `trace-build` |
 | **CLI** | The reproducible interface that exposes tools as documented commands |
 | **Agent Controller** | The orchestration layer that sequences tool calls and routes intermediate results |
 | **Agent Loop** | The repeated workflow of observing inputs, executing actions, evaluating results, updating state, and saving outputs |
@@ -176,11 +197,13 @@ The key distinction is:
 
 ```text
 Model = backend capability
-Tool = callable action
+Tool = callable action exposed as a command
 CLI = reproducible interface
 Agent Controller = workflow orchestrator
 Agent Loop = stateful control process
 ```
+
+In this repository, tools are concrete `medai-cli` commands. For example, `infer` runs model inference, `postprocess` runs optional ShapeKit post-processing, `label-verify` compares annotations and predictions, `projection-build` creates visual comparison images, `vlm-label-expert` performs VLM-assisted annotation review, `em-loop` executes the mini refinement loop, `agent-loop` runs the patient-level workflow, and `trace-build` generates structured reasoning traces.
 
 ---
 
@@ -246,7 +269,7 @@ Observe → Infer → QC → Verify → Review / Update → Trace → Save State
 | Reasoning trace | RadThinking-style trace builder | `patient_traces.json` |
 | Save state | event logging and final summaries | `agent_state.json`, `final_summary.json`, `review_queue.jsonl` |
 
-The workflow is intentionally deterministic and auditable. Optional VLM review is used as a bounded comparison module, not as a free-form clinical decision maker.
+At the workflow level, the agent loop starts from the patient folder, observes the available scans and metadata, calls inference, performs QC, runs label verification, routes uncertain cases to VLM-assisted or manual review, generates RadThinking-style traces, and finally saves the state and summary artifacts. The workflow is intentionally deterministic and auditable. Optional VLM review is used as a bounded comparison module, not as a free-form clinical decision maker.
 
 ---
 
