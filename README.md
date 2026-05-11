@@ -1,106 +1,176 @@
 # medai-agent-loop-cli-anything
 
-> **A runnable CLI-based medical AI workflow prototype with tool calling, verification, and structured reasoning.**
+> **A runnable CLI-based medical AI workflow prototype with tool calling, verification, VLM-assisted review, and structured reasoning.**
 
-`medai-agent-loop-cli-anything` provides a unified `medai-cli` interface for running medical AI tools from the command line. It wraps model inference, segmentation post-processing, annotation verification, VLM-assisted review, versioned annotation management, and RadThinking-style trace generation into reproducible commands with structured JSON outputs.
+`medai-agent-loop-cli-anything` provides a unified `medai-cli` interface for running medical AI models and workflow utilities from the command line. It wraps medical image segmentation, segmentation post-processing, annotation verification, VLM-assisted review, annotation version management, and RadThinking-style trace generation into reproducible CLI commands with structured JSON outputs.
 
-This project focuses on the core engineering layer needed for a medical agent workflow: making models and utilities callable, making intermediate results auditable, and organizing multiple tools into a controlled loop of observation, inference, quality checking, verification, review, and state saving.
-
----
-
-## Table of Contents
-
-- [Project Goal](#project-goal)
-- [Core Contributions](#core-contributions)
-- [System Architecture](#system-architecture)
-- [Design Lineage](#design-lineage)
-- [Repository Structure](#repository-structure)
-- [Installation](#installation)
-- [Self-contained Demo](#self-contained-demo)
-- [Main CLI Commands](#main-cli-commands)
-- [Implementation Details](#implementation-details)
-- [Output Artifacts](#output-artifacts)
-- [Validation Status](#validation-status)
-- [What Is Not Included](#what-is-not-included)
-- [Limitations](#limitations)
-- [Roadmap](#roadmap)
-- [Summary](#summary)
+The project focuses on the engineering foundation of a medical agent workflow: making medical models and utilities callable, making intermediate results auditable, and organizing multiple tools into a controlled workflow of observation, inference, quality checking, verification, review/refinement, trace generation, and state saving.
 
 ---
 
 ## Project Goal
 
-Medical AI workflows often rely on separate scripts, model checkpoints, post-processing tools, manual inspection steps, and evaluation utilities. These components are difficult to reuse in an agentic workflow unless they expose stable interfaces and structured outputs.
+Medical AI workflows often involve separate scripts, model checkpoints, post-processing utilities, manual inspection steps, and evaluation tools. These components are difficult to reuse in an agent workflow unless they expose clear interfaces, predictable parameters, and machine-readable outputs.
 
-This project addresses that engineering gap by building a CLI-centered workflow prototype:
+This project addresses that problem by building a CLI-centered medical AI workflow prototype:
 
 ```text
 medical model / utility
 → CLI-callable tool
-→ JSON-readable output
+→ structured JSON output
 → deterministic workflow controller
-→ review / refinement / trace artifacts
+→ review / refinement / reasoning artifacts
 ```
 
-The current system is built around three design principles:
+The current implementation is built around three principles:
 
-1. **Reproducible interfaces**  
-   Every major operation is exposed through `medai-cli` and can be invoked with explicit command-line arguments.
+1. **Reproducible execution**  
+   Core operations are exposed through `medai-cli` commands and can be invoked with explicit command-line arguments.
 
 2. **Structured outputs**  
-   Commands return JSON-compatible results and save auditable artifacts such as `agent_state.json`, `final_summary.json`, `patient_traces.json`, and `review_queue.jsonl`.
+   The workflow saves JSON-compatible artifacts such as `final_summary.json`, `agent_state.json`, `patient_traces.json`, and `review_queue.jsonl`.
 
 3. **Controlled workflow composition**  
-   Medical tools are connected through a deterministic workflow controller rather than an unconstrained autonomous planner.
+   Medical tools are connected through a deterministic workflow controller instead of an unrestricted autonomous planner.
 
 ---
 
 ## Core Contributions
 
-The repository currently implements the following components:
-
-| Component | Status | Role |
-|---|---:|---|
+| Component | Current implementation | Role |
+|---|---|---|
 | `medai-cli` command interface | Implemented | Unified CLI entry point for medical AI tools |
-| TotalSegmentator / custom backend wrapper | Implemented | AI segmentation or model execution backend |
-| ShapeKit wrapper | Implemented | Optional anatomy-aware post-processing interface |
-| Label Verifier | Implemented | DSC-based annotation-vs-prediction routing |
-| Projection Builder | Implemented | Mask-centered 2D overlay generation for VLM/human review |
-| VLM Label Expert | Implemented as optional module | Pairwise candidate annotation comparison through Ollama/VLM or stub |
+| TotalSegmentator wrapper | Implemented | Real medical image segmentation backend |
+| Custom backend interface | Implemented | Allows arbitrary local model commands to be plugged into the workflow |
+| ShapeKit wrapper | Implemented | Optional anatomy-aware segmentation post-processing |
+| Label Verifier | Implemented | DSC-based comparison between annotation and prediction |
+| Projection Builder | Implemented | CT + mask overlay generation for human or VLM review |
+| VLM Label Expert | Implemented | Candidate annotation comparison with Ollama `qwen2.5vl:7b` or stub backend |
 | AnnotationManager | Implemented | Versioned raw / prediction / updated annotation storage |
-| Mini EM loop | Implemented as prototype | Executable E-step, stubbed M-step and data-annealing plan |
-| RadThinking-style trace | Implemented as rule-based prototype | Structured observation, temporal comparison, clinical context, conclusion fields |
-| Deterministic workflow controller | Implemented | Observe → infer → QC → verify → review/update → trace → save state |
+| Mini EM loop | Implemented as prototype | Inference → optional post-processing → verification/VLM → annotation update → M-step stub |
+| RadThinking-style trace | Implemented | Observation, temporal comparison, clinical context, and conclusion fields |
+| Agent-loop controller | Implemented | Observe → infer → QC → verify → review/update → trace → save state |
 
-A concise summary:
+The repository is not only a single-model wrapper. It contains a CLI wrapper layer, multiple medical tool modules, and a deterministic workflow prototype.
+
+---
+
+## Implementation Details
+
+### Label Verifier
+
+The Label Verifier compares a current annotation with a model prediction using Dice Similarity Coefficient (DSC), then routes the case according to the agreement level.
+
+| Condition | Decision |
+|---|---|
+| prediction missing | `review_queue` |
+| current annotation missing | `auto_replace_candidate` |
+| current annotation empty and prediction non-empty | `auto_replace_candidate` |
+| both masks non-empty but nearly non-overlapping | `send_to_vlm_label_expert` |
+| `0 < DSC < threshold` | `send_to_vlm_label_expert` |
+| `DSC ≥ threshold` | `accept` |
+
+The workflow avoids the unsafe shortcut:
 
 ```text
-Current implementation:
-CLI wrapper layer + medical tool commands + deterministic workflow prototype
-
-Not included:
-clinical diagnosis, full autonomous planning, full model retraining, full ScaleMAI reproduction
+DSC = 0 → always replace
 ```
+
+If both masks are non-empty but completely disjoint, the case is routed to VLM-assisted review or manual review instead of being blindly overwritten.
+
+---
+
+### Projection Builder
+
+The Projection Builder converts a CT image and one or two candidate masks into mask-centered 2D overlay images.
+
+```text
+CT image + candidate mask A + candidate mask B
+→ axial / coronal / sagittal overlays
+→ PNG files for VLM-assisted or manual review
+```
+
+It also supports strict alignment checks to detect CT/mask shape mismatch or affine mismatch before creating the visual comparison.
+
+---
+
+### VLM Label Expert
+
+The VLM Label Expert compares two candidate annotations using projection images.
+
+```text
+CT image + annotation A + annotation B
+→ projection PNGs
+→ VLM or stub backend
+→ winner / confidence / reason
+→ decision log or review routing
+```
+
+Example output:
+
+```json
+{
+  "winner": "A",
+  "confidence": 0.80,
+  "reason": "Candidate A is more anatomically plausible.",
+  "num_projection_images_sent": 2
+}
+```
+
+The VLM path can run through a local Ollama model such as `qwen2.5vl:7b`, or through a stub backend for dependency-free testing. If the VLM response cannot be parsed safely, the result is marked uncertain and can be routed for review.
+
+---
+
+### Mini EM Annotation-Refinement Loop
+
+The mini EM loop is inspired by iterative annotation refinement workflows.
+
+```text
+Round N
+→ inference
+→ optional ShapeKit post-processing
+→ E-step: verifier + optional VLM review
+→ annotation update
+→ M-step: retraining stub / data-annealing plan
+→ metrics saved
+```
+
+The current implementation executes inference, verification, VLM/stub routing, annotation versioning, and metrics logging. The M-step records the intended retraining or data-annealing plan but does not train a new model.
+
+---
+
+### RadThinking-style Trace
+
+The trace generator produces structured case-level outputs.
+
+| Field | Meaning |
+|---|---|
+| `observation` | CT/mask-derived observation fields, such as volume, bounding box, centroid, and intensity summary |
+| `temporal_comparison` | comparison with a previous scan when available |
+| `clinical_context` | parsed report and clinical JSON information |
+| `diagnostic_conclusion` | structured conclusion field derived from provided pathology or follow-up JSON when available |
+
+The trace generator organizes evidence into a structured artifact. It does not make a clinical diagnosis.
 
 ---
 
 ## System Architecture
 
-The architecture is presented at three levels. Each figure answers a different design question.
+The system is explained through three architecture views. They are intentionally separated because they answer different design questions.
 
 ### 1. Conceptual Relationship: Model, CLI, Tool, Agent, and Agent Loop
 
 ![Relationship among Model, CLI, Tool, Agent, and Agent Loop](assets/concept_map_model_cli_tool_agent_loop.png)
 
-This view defines the project’s conceptual vocabulary.
+This figure clarifies the conceptual structure of the project.
 
 | Concept | Meaning in this repository |
 |---|---|
-| **Model** | Backend capability such as TotalSegmentator, a custom model, a mock backend, or a VLM. |
-| **Tool** | A callable operation such as `infer`, `postprocess`, `label-verify`, `projection-build`, `vlm-label-expert`, `em-loop`, or `trace-build`. |
-| **CLI** | The reproducible interface that exposes tools as commands. |
-| **Agent Controller** | The orchestration layer that sequences tool calls and routes intermediate results. |
-| **Agent Loop** | The repeated workflow of observe → decide/route → act → evaluate → save state. |
+| **Model** | Backend capability such as TotalSegmentator, a custom segmentation model, a mock backend, or a VLM |
+| **Tool** | A callable operation such as `infer`, `postprocess`, `label-verify`, `projection-build`, `vlm-label-expert`, `em-loop`, or `trace-build` |
+| **CLI** | The reproducible interface that exposes tools as documented commands |
+| **Agent Controller** | The orchestration layer that sequences tool calls and routes intermediate results |
+| **Agent Loop** | The repeated workflow of observing inputs, executing actions, evaluating results, updating state, and saving outputs |
 
 The key distinction is:
 
@@ -118,7 +188,7 @@ Agent Loop = stateful control process
 
 ![CLI Wrapper Layer for Medical AI Tools](assets/cli_based_ai_model_wrapper.png)
 
-This view shows the engineering layer that makes medical AI components callable and reusable.
+This figure shows the engineering layer that makes medical AI components callable and reusable.
 
 ```text
 command invocation
@@ -133,22 +203,14 @@ command invocation
 | Wrapper stage | Implementation |
 |---|---|
 | Command invocation | `python run_medai_cli.py --json <command> ...` |
-| Argument parsing | `click`-based CLI definitions in `medai_cli.py` |
-| Input loading | CT images, masks, reports, patient folders, JSON metadata |
-| Validation / preparation | path checks, folder normalization, organ lists, projection building |
-| Tool / model execution | TotalSegmentator, ShapeKit wrapper, VLM Label Expert, custom backend, mock model |
-| Output formatting | JSON serialization, summary generation, trace construction, state logging |
-| Saved artifacts | `final_summary.json`, `agent_state.json`, `patient_traces.json`, `review_queue.jsonl`, projection PNGs |
+| Argument parsing | `click`-based command definitions in `medai_cli.py` |
+| Input loading | CT images, masks, reports, patient folders, and JSON metadata |
+| Validation / preparation | path checks, folder normalization, organ lists, projection building, and metadata preparation |
+| Tool / model execution | TotalSegmentator, ShapeKit wrapper, VLM Label Expert, custom backend, and mock backend |
+| Output formatting | JSON serialization, summary generation, trace construction, and state logging |
+| Saved artifacts | `final_summary.json`, `agent_state.json`, `patient_traces.json`, `review_queue.jsonl`, projection PNGs, and annotation version folders |
 
-The wrapper layer makes tools:
-
-```text
-terminal-runnable
-JSON-readable
-loggable
-reproducible
-agent-callable
-```
+The wrapper layer makes the tools runnable from the terminal, compatible with JSON-based automation, and ready to be called by a later agent controller.
 
 ---
 
@@ -156,7 +218,7 @@ agent-callable
 
 ![Medical Agent Loop Prototype](assets/medical_agent_loop_prototype.png)
 
-This view shows how the wrapper layer is composed into a medical workflow.
+This figure shows how the CLI-callable tools are composed into a medical workflow prototype.
 
 ```text
 Medical inputs
@@ -168,7 +230,7 @@ Medical inputs
 → save state and outputs
 ```
 
-The implemented deterministic loop is:
+The current deterministic loop is:
 
 ```text
 Observe → Infer → QC → Verify → Review / Update → Trace → Save State
@@ -176,13 +238,13 @@ Observe → Infer → QC → Verify → Review / Update → Trace → Save State
 
 | Workflow stage | Implementation | Output |
 |---|---|---|
-| Medical inputs | CT image, masks, reports, clinical JSON, patient folder | input layout |
-| Observe / prepare | input checks, folder scan, adapter, projection builder | normalized inputs / metadata |
-| Infer | TotalSegmentator, custom backend, or mock model | segmentation masks / model outputs |
-| QC and verification | QC checker + Label Verifier | organ presence, metrics, DSC routing |
-| Review / refinement | VLM Label Expert, human review queue, AnnotationManager, mini EM loop | decisions, updated candidates, review items |
+| Medical inputs | CT image, masks, reports, clinical JSON, patient folder | patient/case layout |
+| Observe / prepare | patient-folder scan, input checks, adapter, projection builder | normalized inputs and metadata |
+| Infer | TotalSegmentator, custom backend, or mock backend | segmentation masks / model outputs |
+| QC and verification | QC checker + Label Verifier | organ presence checks, DSC routing, warning/review decisions |
+| Review / refinement | VLM Label Expert, review queue, AnnotationManager, mini EM loop | decisions, updated candidates, review items |
 | Reasoning trace | RadThinking-style trace builder | `patient_traces.json` |
-| Save state | auditable execution logging | `agent_state.json`, `final_summary.json` |
+| Save state | event logging and final summaries | `agent_state.json`, `final_summary.json`, `review_queue.jsonl` |
 
 The workflow is intentionally deterministic and auditable. Optional VLM review is used as a bounded comparison module, not as a free-form clinical decision maker.
 
@@ -190,15 +252,15 @@ The workflow is intentionally deterministic and auditable. Optional VLM review i
 
 ## Design Lineage
 
-The project combines ideas from several research and engineering systems. External projects, papers, datasets, and third-party source code are **not redistributed** in this repository.
+The project combines ideas from multiple systems and papers, but it does not redistribute external source repositories, private datasets, or paper PDFs.
 
-| Source / idea | Key concept | Project implementation |
+| Source / idea | Key concept | How it appears in this project |
 |---|---|---|
-| CLI-Anything-style design | Expose software functions as agent-callable CLI commands | `medai-cli`, `--json`, `SKILL.md`, stable tool commands |
-| ScaleMAI-style refinement | Iterative verification and annotation refinement | Label Verifier, VLM Label Expert, AnnotationManager, mini EM loop |
-| ShapeKit-style post-processing | Anatomy-aware segmentation post-processing | optional `postprocess` wrapper |
-| PanTS-style setting | Pancreatic CT segmentation / evaluation context | PanTS import/eval helpers and batch scripts |
-| RadThinking-style reasoning | Structured longitudinal reasoning trace | observation, temporal comparison, clinical context, diagnostic conclusion fields |
+| CLI-Anything-style design | Expose software capabilities as CLI-callable tools | `medai-cli`, JSON output mode, `SKILL.md`, documented commands, structured outputs |
+| ScaleMAI-style refinement | Iterative annotation verification and refinement | Label Verifier, VLM Label Expert, AnnotationManager, mini EM loop |
+| ShapeKit-style post-processing | Anatomy-aware segmentation post-processing | optional `postprocess` command and `shapekit_runner.py` |
+| PanTS-style setting | Pancreatic CT segmentation / evaluation background | PanTS import/check/eval helpers and batch scripts |
+| RadThinking-style reasoning | Structured longitudinal reasoning trace | observation, temporal comparison, clinical context, and conclusion fields |
 
 ---
 
@@ -247,22 +309,38 @@ medai-agent-loop-cli-anything/
 
 ### Minimal installation
 
-The minimal setup is sufficient for the self-contained demo. It does not require PanTS, ShapeKit, TotalSegmentator, Ollama, GPU, or private medical data.
+The minimal setup is enough for the self-contained workflow demo. It does not require PanTS, ShapeKit, TotalSegmentator, Ollama, GPU, or private medical data.
 
 ```powershell
 conda create -n medai-agent python=3.10 -y
 conda activate medai-agent
-cd medai-agent-loop-cli-anything
+cd D:\Desktop\medai_agent_loop_cli_anything_final
+
 pip install -r agent-harness\requirements.txt
 pip install -e agent-harness
+
 python run_medai_cli.py --json doctor
 ```
 
-### Optional TotalSegmentator support
+### Optional TotalSegmentator backend
+
+TotalSegmentator is supported as a real medical image segmentation backend.
 
 ```powershell
 pip install -r agent-harness\requirements-totalseg.txt
 ```
+
+After installation, `infer`, `run`, `agent-loop`, and `em-loop` can use the TotalSegmentator backend through `--backend totalseg`.
+
+### Optional VLM backend
+
+The VLM Label Expert can use Ollama with `qwen2.5vl:7b`.
+
+```powershell
+ollama pull qwen2.5vl:7b
+```
+
+If Ollama is not available, VLM-related commands can still be exercised with the `stub` backend.
 
 ### Development tests
 
@@ -270,38 +348,59 @@ pip install -r agent-harness\requirements-totalseg.txt
 pip install -r agent-harness\requirements-dev.txt
 cd agent-harness
 python -m pytest tests/ -v
+cd ..
 ```
 
 Validation notes are documented in:
 
-- `docs/VALIDATION_REPORT.md`
-- `docs/VALIDATION_RUN_2026-05-10.md`
+```text
+docs/VALIDATION_REPORT.md
+docs/VALIDATION_RUN_2026-05-10.md
+```
 
 ---
 
-## Self-contained Demo
+## Workflow Demo
 
-The repository includes a synthetic demo with a mock model backend.
+This section provides a reproducible Windows PowerShell demo for the CLI workflow. It uses synthetic patient data and the included lightweight mock backend, so it can run without private medical data, GPU, TotalSegmentator, ShapeKit, or Ollama. The same CLI interface also supports real TotalSegmentator inference, VLM-assisted review, ShapeKit post-processing, PanTS utilities, and mini EM-style refinement when those dependencies or datasets are available.
 
-### Step 1 — Generate synthetic patient data
+### Primary end-to-end workflow
+
+Copy and run the following commands in PowerShell.
+
+```powershell
+cd D:\Desktop\medai_agent_loop_cli_anything_final
+```
+
+```powershell
+python run_medai_cli.py --help
+```
+
+```powershell
+python run_medai_cli.py --json doctor
+```
+
+```powershell
+Remove-Item -Recurse -Force data\radthinking_demo -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force outputs\meeting_demo -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force outputs\vlm_stub_demo -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force outputs\em_loop_demo -ErrorAction SilentlyContinue
+Remove-Item -Recurse -Force outputs\totalseg_demo -ErrorAction SilentlyContinue
+```
 
 ```powershell
 python scripts\create_radthinking_demo.py
 ```
-
-### Step 2 — Check the patient layout
 
 ```powershell
 python run_medai_cli.py --json radthinking-check `
   --patient-folder data\radthinking_demo\patient_001
 ```
 
-### Step 3 — Run the workflow prototype
-
 ```powershell
 python run_medai_cli.py --json agent-loop `
   --patient-folder data\radthinking_demo\patient_001 `
-  --output-folder outputs\agent_loop_mock_self_contained `
+  --output-folder outputs\meeting_demo `
   --backend custom `
   --model-command "python third_party\mock_model\mock_seg_infer.py --image {image} --output {output}" `
   --postprocess none `
@@ -309,10 +408,10 @@ python run_medai_cli.py --json agent-loop `
   --expected-organs liver
 ```
 
-### Step 4 — Inspect outputs
+The workflow writes its outputs to:
 
 ```text
-outputs/agent_loop_mock_self_contained/
+outputs/meeting_demo/
 ├── agent_state.json
 ├── final_summary.json
 ├── patient_traces.json
@@ -320,26 +419,126 @@ outputs/agent_loop_mock_self_contained/
 └── scan_outputs/
 ```
 
-This demo verifies that the CLI runs, the backend is called, outputs are generated, and workflow state is saved.
+### Inspect generated outputs
+
+The following commands print the most important output files directly in the terminal.
+
+```powershell
+Get-ChildItem outputs\meeting_demo
+```
+
+```powershell
+Get-Content outputs\meeting_demo\final_summary.json
+```
+
+```powershell
+Get-Content outputs\meeting_demo\agent_state.json
+```
+
+```powershell
+Get-Content outputs\meeting_demo\patient_traces.json
+```
+
+```powershell
+Get-Content outputs\meeting_demo\review_queue.jsonl
+```
+
+```powershell
+Get-ChildItem outputs\meeting_demo\scan_outputs -Recurse
+```
+
+| Output | Meaning |
+|---|---|
+| `final_summary.json` | Run-level summary containing status, implemented steps, scan results, review items, and output paths |
+| `agent_state.json` | Event-level workflow trace recording observation, inference, QC, decision, trace, and save-state events |
+| `patient_traces.json` | RadThinking-style structured traces with observation, temporal comparison, clinical context, and conclusion fields |
+| `review_queue.jsonl` | Review queue for uncertain, failed, or safety-sensitive cases |
+| `scan_outputs/` | Per-scan backend outputs, including generated prediction folders and command logs |
+
+### Optional VLM Label Expert interface
+
+This command exercises the VLM Label Expert interface with the dependency-free `stub` backend. It uses two synthetic masks from different time points to trigger projection generation and structured review output.
+
+```powershell
+python run_medai_cli.py --json vlm-label-expert `
+  --ct-image data\radthinking_demo\patient_001\scans\2013-10\ct.nii.gz `
+  --annotation-a data\radthinking_demo\patient_001\demo_masks\2013-07\liver.nii.gz `
+  --annotation-b data\radthinking_demo\patient_001\demo_masks\2013-10\liver.nii.gz `
+  --organ liver `
+  --output-folder outputs\vlm_stub_demo `
+  --vlm-backend stub
+```
+
+Inspect the VLM Label Expert output:
+
+```powershell
+Get-ChildItem outputs\vlm_stub_demo -Recurse
+```
+
+If a local Ollama VLM is available, the same command can be run with:
+
+```powershell
+python run_medai_cli.py --json vlm-label-expert `
+  --ct-image data\radthinking_demo\patient_001\scans\2013-10\ct.nii.gz `
+  --annotation-a data\radthinking_demo\patient_001\demo_masks\2013-07\liver.nii.gz `
+  --annotation-b data\radthinking_demo\patient_001\demo_masks\2013-10\liver.nii.gz `
+  --organ liver `
+  --output-folder outputs\vlm_ollama_demo `
+  --vlm-backend ollama `
+  --vlm-model qwen2.5vl:7b
+```
+
+### Optional mini EM loop dry run
+
+This command exercises the mini EM-loop interface without running full model training.
+
+```powershell
+python run_medai_cli.py --json em-loop `
+  --case-id demo_case `
+  --ct-image data\radthinking_demo\patient_001\scans\2013-10\ct.nii.gz `
+  --annotation-folder data\radthinking_demo\patient_001\demo_masks\2013-10 `
+  --output-folder outputs\em_loop_demo `
+  --organs liver `
+  --vlm-backend stub `
+  --postprocess none `
+  --dry-run
+```
+
+Inspect the EM-loop output:
+
+```powershell
+Get-ChildItem outputs\em_loop_demo -Recurse
+```
+
+```powershell
+Get-Content outputs\em_loop_demo\rounds_metrics.json
+```
+
+### Optional TotalSegmentator inference
+
+This command uses the real TotalSegmentator backend. Run it only after installing the optional TotalSegmentator requirements.
+
+```powershell
+python scripts\create_demo_ct.py
+```
+
+```powershell
+python run_medai_cli.py --json infer `
+  --image data\single_case\case_001\ct.nii.gz `
+  --output-folder outputs\totalseg_demo `
+  --backend totalseg `
+  --fast
+```
+
+Inspect the TotalSegmentator output:
+
+```powershell
+Get-ChildItem outputs\totalseg_demo -Recurse
+```
 
 ---
 
 ## Main CLI Commands
-
-| Command | Purpose |
-|---|---|
-| `doctor` | Check runtime environment and backend availability |
-| `infer` | Run AI segmentation backend or custom model command |
-| `postprocess` | Run ShapeKit post-processing if available locally |
-| `run` | One-shot inference + optional post-processing |
-| `label-verify` | Compare annotation and prediction using DSC |
-| `projection-build` | Generate mask-centered 2D projection PNGs |
-| `vlm-label-expert` | Ask a VLM to compare candidate annotations |
-| `em-loop` | Run the mini EM annotation-refinement workflow |
-| `agent-loop` | Run the patient-level workflow prototype |
-| `trace-build` | Build one RadThinking-style trace |
-| `pants-import-*` | Import PanTS-like cases into project layout |
-| `pants-eval-case` | Compute Dice sanity checks for selected organs |
 
 Typical command form:
 
@@ -347,88 +546,58 @@ Typical command form:
 python run_medai_cli.py --json <command> ...
 ```
 
----
+### Environment and layout utilities
 
-## Implementation Details
-
-### Label Verifier
-
-The Label Verifier compares a current annotation with a model prediction using Dice/DSC and routes cases conservatively.
-
-| Condition | Decision |
+| Command | Purpose |
 |---|---|
-| prediction missing | `review_queue` |
-| current annotation missing | `auto_replace_candidate` |
-| current annotation empty + prediction non-empty | `auto_replace_candidate` |
-| both masks non-empty but DSC ≈ 0 | `send_to_vlm_label_expert` |
-| `0 < DSC < threshold` | `send_to_vlm_label_expert` |
-| DSC ≥ threshold | `accept` |
+| `doctor` | Check Python environment, optional backend paths, and project configuration |
+| `presets` | Show ROI presets and expected organs used by TotalSegmentator/ShapeKit-style workflows |
+| `check-image` | Validate a CT image path |
+| `check-folder` | Validate an input case or segmentation folder |
+| `summary` | Summarize a segmentation folder |
 
-The system avoids the unsafe shortcut:
+### Inference and post-processing
 
-```text
-DSC = 0 → always replace
-```
-
-### VLM Label Expert
-
-The VLM Label Expert is optional and bounded.
-
-```text
-CT image + annotation A + annotation B
-→ build mask-centered 2D overlays
-→ send projections to VLM
-→ parse JSON decision
-→ update decision log or route to review queue
-```
-
-Example output:
-
-```json
-{
-  "winner": "A",
-  "confidence": 0.80,
-  "reason": "Candidate A is more anatomically plausible.",
-  "num_projection_images_sent": 2
-}
-```
-
-If projection alignment fails or the VLM response cannot be parsed safely, the system routes the case to review rather than forcing a decision.
-
-### Mini EM Annotation-Refinement Loop
-
-The mini EM loop is inspired by iterative annotation-refinement workflows.
-
-```text
-Round N
-→ inference
-→ optional post-processing
-→ E-step: verifier + optional VLM review
-→ annotation update
-→ M-step: retraining stub / data-annealing plan
-→ metrics saved
-```
-
-Current implementation:
-
-- executable inference / verification / annotation-update path;
-- optional ShapeKit post-processing;
-- optional VLM routing;
-- per-round metrics;
-- stubbed M-step for future training backend integration.
-
-### RadThinking-style Trace
-
-The trace generator produces structured case-level summaries:
-
-| Field | Meaning |
+| Command | Purpose |
 |---|---|
-| `observation` | CT/mask-derived observation fields |
-| `temporal_comparison` | comparison with prior scan when available |
-| `clinical_context` | parsed report / clinical JSON information |
-| `diagnostic_conclusion` | structured field derived from provided pathology/follow-up JSON when available |
+| `infer` | Run TotalSegmentator or a custom local model command and save segmentation outputs |
+| `adapt` | Normalize a segmentation folder into the naming/layout expected by the workflow |
+| `postprocess` | Run ShapeKit post-processing when ShapeKit is installed locally |
+| `run` | Run one image through inference, adapter, optional ShapeKit post-processing, and summary generation |
 
-The trace generator does not fabricate clinical diagnosis.
+### RadThinking-style reasoning
+
+| Command | Purpose |
+|---|---|
+| `radthinking-check` | Validate the synthetic or imported patient-folder layout |
+| `radthinking-run-patient` | Run per-scan inference and optional post-processing over a patient folder |
+| `trace-template` | Create a trace template for a case |
+| `trace-observation` | Extract mask/CT-based observation features |
+| `trace-temporal` | Compare previous and current masks to generate temporal labels |
+| `trace-context` | Parse report and clinical metadata into structured context |
+| `trace-build` | Build one RadThinking-style structured trace |
+| `trace-patient` | Build patient-level traces from workflow outputs |
+
+### Verification, VLM review, and refinement
+
+| Command | Purpose |
+|---|---|
+| `label-verify` | Compare current annotations with model predictions using DSC and route cases to accept, VLM review, or manual review |
+| `projection-build` | Generate CT + mask overlay PNGs for manual or VLM-assisted review |
+| `vlm-label-expert` | Compare candidate annotations using projection images and a VLM or stub backend |
+| `em-loop` | Run a mini annotation-refinement loop: inference, optional ShapeKit, verification/VLM review, annotation update, and M-step stub |
+| `agent-loop` | Run the patient-level deterministic workflow controller: observe, infer, QC, verify, review/update, trace, save state |
+
+### PanTS utilities
+
+| Command | Purpose |
+|---|---|
+| `pants-info` | Show PanTS download and layout information |
+| `pants-check` | Check whether a local PanTS directory is available and recognizable |
+| `pants-find-case` | Locate a specific downloaded PanTS case |
+| `pants-import-case` | Import one downloaded PanTS case into the project’s patient-folder layout |
+| `pants-import-files` | Import a PanTS-like CT case from local image/label/report paths |
+| `pants-eval-case` | Compute binary Dice scores between predicted masks and reference labels for selected organs |
 
 ---
 
@@ -436,13 +605,15 @@ The trace generator does not fabricate clinical diagnosis.
 
 | Output | Meaning |
 |---|---|
-| `final_summary.json` | final run-level summary |
-| `agent_state.json` | auditable event trajectory |
-| `patient_traces.json` | RadThinking-style structured traces |
-| `review_queue.jsonl` | uncertain cases requiring VLM or human review |
-| `annotation_versions/` | versioned raw / prediction / updated annotations and decisions |
-| `rounds_metrics.json` | mini EM loop per-round metrics |
-| projection PNGs | visual annotation-comparison artifacts |
+| `final_summary.json` | Final run-level summary, including status, implemented steps, scan results, review items, and output paths |
+| `agent_state.json` | Auditable event log for the workflow; records each step, status, action result, and final summary |
+| `patient_traces.json` | RadThinking-style structured traces for patient scans |
+| `review_queue.jsonl` | Review queue for uncertain, failed, or safety-sensitive cases |
+| `scan_outputs/` | Per-scan output directory containing raw predictions, optional refined predictions, logs, and refinement artifacts |
+| `annotation_versions/` | Versioned annotation storage used during agent-loop refinement: raw, predictions, updated labels, and decisions |
+| `annotations/` | Versioned annotation storage used by the standalone `em-loop` command |
+| `rounds_metrics.json` | Per-round EM-loop metrics, decisions, annotation summaries, and M-step stub information |
+| projection PNGs | CT + mask overlay images used for VLM-assisted or manual annotation comparison |
 
 Static sample outputs are provided in:
 
@@ -454,27 +625,31 @@ examples/sample_outputs/
 
 ## Validation Status
 
-The repository includes unit and smoke-test coverage for key modules:
+The repository includes tests for key modules:
 
-- Label Verifier routing;
-- AnnotationManager versioning;
-- VLM response parsing;
-- projection builder;
-- RadThinking negation-aware parsing;
-- QC checks;
-- EM loop dry-run;
-- package import checks.
+```text
+Label Verifier routing
+AnnotationManager versioning
+VLM response parsing
+Projection Builder
+RadThinking trace parsing
+QC checks
+EM loop dry-run
+package import checks
+```
 
-Recorded validation artifacts are available in:
+Recorded validation notes are available in:
 
-- `docs/VALIDATION_REPORT.md`
-- `docs/VALIDATION_RUN_2026-05-10.md`
+```text
+docs/VALIDATION_REPORT.md
+docs/VALIDATION_RUN_2026-05-10.md
+```
 
 ---
 
-## What Is Not Included
+## Data and Dependency Notes
 
-The upload intentionally excludes:
+This repository intentionally excludes:
 
 ```text
 real CT data
@@ -490,57 +665,38 @@ API keys / tokens / secrets
 
 Reasons:
 
-- avoid uploading medical or derived data;
-- avoid third-party copyright/license risks;
-- avoid redistributing private or unpublished materials;
-- keep the repository lightweight and reproducible.
+```text
+avoid uploading medical or derived data
+avoid third-party copyright/license risks
+avoid redistributing private or unpublished materials
+keep the repository lightweight and reproducible
+```
 
-Additional notes:
+See also:
 
-- `UPLOAD_MANIFEST.md`
-- `PACKAGE_NOTES.md`
-- `third_party/README.md`
-
----
-
-## Limitations
-
-| Topic | Current status |
-|---|---|
-| Full ScaleMAI reproduction | Not included; only a mini EM-inspired prototype |
-| Real training backend / continual tuning | Not included; M-step is a stub |
-| Fully autonomous LLM planner | Not included by default |
-| Clinical diagnosis | Not performed |
-| Real PanTS tumor-specific model | Not bundled; can be plugged in through a custom backend |
-| ShapeKit source | Not bundled; local installation required |
-| Optional VLM | Supported when a local Ollama model is available |
-
----
-
-## Roadmap
-
-Planned extensions include:
-
-1. plug in a task-specific or lab-provided segmentation model through `--backend custom`;
-2. add a real training backend for the M-step;
-3. connect human review/editing to annotation refinement;
-4. expand VLM Label Expert evaluation and projection modes;
-5. improve report-to-structure extraction for richer clinical context;
-6. optionally add a constrained LLM planner with a strict tool registry and JSON action schema.
+```text
+UPLOAD_MANIFEST.md
+PACKAGE_NOTES.md
+third_party/README.md
+```
 
 ---
 
 ## Summary
 
-`medai-agent-loop-cli-anything` demonstrates a first-stage engineering prototype for medical AI tool orchestration:
+`medai-agent-loop-cli-anything` demonstrates a CLI-based medical AI workflow prototype with:
 
 ```text
-CLI wrapper layer
-+ medical tool commands
-+ deterministic workflow controller
-+ verification and review routing
-+ mini EM-inspired annotation refinement
+real TotalSegmentator wrapper
++ custom model backend
++ optional ShapeKit post-processing
++ Label Verifier
++ Projection Builder
++ VLM Label Expert
++ AnnotationManager
++ mini EM-style refinement
 + RadThinking-style structured traces
++ deterministic workflow controller
 + auditable JSON outputs
 ```
 
